@@ -19,14 +19,20 @@ import javax.servlet.http.HttpServletResponseWrapper;
 
 public class SecurityHeadersFilter implements Filter {
 
-	static final String DEFAULT_HSTS = "max-age=63072000; includeSubDomains";
+	static final String DEFAULT_HSTS = "max-age=63072000; includeSubDomains; preload";
 	static final String DEFAULT_FRAME_OPTIONS = "SAMEORIGIN";
 	static final String DEFAULT_CONTENT_TYPE_OPTIONS = "nosniff";
 	static final String DEFAULT_REFERRER_POLICY = "no-referrer-when-downgrade";
+
+	static final String DEFAULT_CLEAR_SITE_DATA =
+			"\"cache\", \"cookies\", \"storage\", \"executionContexts\"";
+
+	static final String DEFAULT_CLEAR_SITE_DATA_PATHS = "/j_spring_security_logout,/logout.html";
+
 	static final String DEFAULT_PERMISSIONS_POLICY = "camera=(), geolocation=(), microphone=(), usb=(), payment=()";
 
 
-	static final String DEFAULT_CSP = "default-src 'self'; " + "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+	static final String DEFAULT_CSP = "default-src 'self'; " + "script-src 'self' 'unsafe-inline'; "
 			+ "style-src 'self' 'unsafe-inline'; " + "img-src 'self' data:; " + "font-src 'self'; "
 			+ "connect-src 'self'; " + "object-src 'none'; " + "base-uri 'self'; " + "form-action 'self'; "
 			+ "frame-ancestors 'self'";
@@ -42,6 +48,8 @@ public class SecurityHeadersFilter implements Filter {
 	private String referrerPolicy;
 	private String permissionsPolicy;
 	private String contentSecurityPolicy;
+	private String clearSiteData;
+	private Set<String> clearSiteDataPaths;
 	private boolean alwaysSendHsts;
 
 	@Override
@@ -54,6 +62,16 @@ public class SecurityHeadersFilter implements Filter {
 		this.referrerPolicy = param(config, "referrerPolicy", DEFAULT_REFERRER_POLICY);
 		this.permissionsPolicy = param(config, "permissionsPolicy", DEFAULT_PERMISSIONS_POLICY);
 		this.contentSecurityPolicy = param(config, "contentSecurityPolicy", DEFAULT_CSP);
+		this.clearSiteData = param(config, "clearSiteData", DEFAULT_CLEAR_SITE_DATA);
+
+		Set<String> paths = new HashSet<>();
+		for (String path : param(config, "clearSiteDataPaths", DEFAULT_CLEAR_SITE_DATA_PATHS).split(",")) {
+			String trimmed = path.trim();
+			if (!trimmed.isEmpty()) {
+				paths.add(trimmed);
+			}
+		}
+		this.clearSiteDataPaths = Collections.unmodifiableSet(paths);
 	}
 
 	private static String param(FilterConfig config, String name, String defaultValue) {
@@ -77,9 +95,11 @@ public class SecurityHeadersFilter implements Filter {
 			set(response, "Referrer-Policy", this.referrerPolicy);
 			set(response, "Permissions-Policy", this.permissionsPolicy);
 
-			set(response, "Content-Security-Policy", this.contentSecurityPolicy);
+			if (isClearSiteDataPath(request)) {
+				set(response, "Clear-Site-Data", this.clearSiteData);
+			}
 
-			set(response, "X-Content-Security-Policy", this.contentSecurityPolicy);
+			set(response, "Content-Security-Policy", this.contentSecurityPolicy);
 
 			response.setHeader("X-Powered-By", "");
 
@@ -105,6 +125,18 @@ public class SecurityHeadersFilter implements Filter {
 				}
 			}
 		};
+	}
+
+	private boolean isClearSiteDataPath(HttpServletRequest request) {
+		String uri = request.getRequestURI();
+		if (uri == null) {
+			return false;
+		}
+		String context = request.getContextPath();
+		if (context != null && !context.isEmpty() && uri.startsWith(context)) {
+			uri = uri.substring(context.length());
+		}
+		return this.clearSiteDataPaths.contains(uri);
 	}
 
 	private static boolean isLocked(String name) {
